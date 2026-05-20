@@ -3,7 +3,7 @@
 ---
 
 
-O **Amon AI** é um assistente virtual com inteligência artificial desenvolvido em Python, focado em educação financeira e experiência do usuário.
+O **Amon IA** é um assistente virtual com inteligência artificial desenvolvido em Python, focado em educação financeira e experiência do usuário.
 
 A aplicação permite interação em linguagem natural para responder dúvidas financeiras, sugerir boas práticas e auxiliar na tomada de decisões.
 
