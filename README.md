@@ -131,12 +131,11 @@ python -m pip install -r requirements.txt
 Na raiz do projeto, crie o arquivo **`.env`**:
 
 ```env
-OPENAI_API_KEY=sua_chave_do_openrouter_aqui
+OPENROUTER_API_KEY=sua_chave_do_openrouter_aqui
+OPENROUTER_MODEL=openrouter/free
 ```
 
-> **Importante:** na versão atual da `main`, o código utiliza o nome `OPENAI_API_KEY` mesmo conectando ao **OpenRouter**. A versão proposta no PR #1 passa a utilizar preferencialmente `OPENROUTER_API_KEY`.
-
-O identificador do modelo está definido no arquivo `services/ia.py`. Verifique se ele está disponível na sua conta do OpenRouter.
+A chave antiga `OPENAI_API_KEY` continua aceita para compatibilidade. O roteador `openrouter/free` seleciona um modelo gratuito disponível; consulte os [limites de uso do OpenRouter](https://openrouter.ai/collections/free-models/). Caso queira definir outro, altere `OPENROUTER_MODEL`.
 
 ### 6. Inicie a aplicação
 
@@ -158,7 +157,8 @@ Para publicar no [Streamlit Community Cloud](https://share.streamlit.io/):
 4. Adicione a chave no formato TOML:
 
 ```toml
-OPENAI_API_KEY = "sua_chave_do_openrouter_aqui"
+OPENROUTER_API_KEY = "sua_chave_do_openrouter_aqui"
+OPENROUTER_MODEL = "openrouter/free"
 ```
 
 5. Salve e reinicie o aplicativo, se necessário.
