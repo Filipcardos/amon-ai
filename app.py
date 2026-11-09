@@ -5,13 +5,21 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
+from pathlib import Path
+
+from PIL import Image
 
 import streamlit as st
 
 from services.calculos import simular_juros_compostos
 from services.ia import DEFAULT_MODEL, IAServiceError, perguntar_ia
 
-st.set_page_config(page_title="Amon AI | Finanças pessoais", page_icon="💳", layout="centered")
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "amon-logo.png"
+st.set_page_config(
+    page_title="Amon AI | Finanças pessoais",
+    page_icon=Image.open(LOGO_PATH),
+    layout="centered",
+)
 
 
 def configuracao(nome: str) -> str:
@@ -76,7 +84,11 @@ with st.sidebar:
     st.caption("Seu histórico fica na sessão atual e não é armazenado em banco de dados.")
     st.caption("Não informe senhas, números de cartão ou dados bancários sensíveis no chat.")
 
-st.title("💳 Amon AI")
+logo_col, titulo_col = st.columns([1, 10], gap="small", vertical_alignment="center")
+with logo_col:
+    st.image(str(LOGO_PATH), use_container_width=True)
+with titulo_col:
+    st.title("Amon AI")
 st.caption("Seu assistente de educação financeira, com respostas práticas em português.")
 
 chat_tab, simulador_tab = st.tabs(["Chat com IA", "Simulador de juros"])

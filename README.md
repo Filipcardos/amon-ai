@@ -2,12 +2,14 @@
 
 <img width="100%" alt="Banner do Amon AI" src="https://github.com/user-attachments/assets/edab3b1e-6dd7-4535-9207-9e7df90dc07e" />
 
+<img src="assets/amon-logo.png" width="112" alt="Logo do Amon AI" />
+
 # Amon AI
 ### Assistente financeiro com inteligência artificial
 
 **Um assistente conversacional para tornar a educação financeira mais acessível, clara e prática.**
 
-[**Experimentar aplicação**](https://amon-ai.streamlit.app/) · [**Ver código-fonte**](https://github.com/Filipcardos/amon-ai) · [**Ver atualização proposta**](https://github.com/Filipcardos/amon-ai/pull/1)
+[**Experimentar aplicação**](https://amon-ai.streamlit.app/) · [**Ver código-fonte**](https://github.com/Filipcardos/amon-ai)
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Web_App-FF4B4B?logo=streamlit&logoColor=white)

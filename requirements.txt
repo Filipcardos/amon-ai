@@ -1,3 +1,4 @@
 openai>=1.55.0,<3
 python-dotenv>=1.0.0,<2
 streamlit>=1.39.0,<2
+pillow>=10,<13
