@@ -7,7 +7,7 @@
 
 **Um assistente conversacional para tornar a educação financeira mais acessível, clara e prática.**
 
-[**Experimentar aplicação**](https://amon-ai.streamlit.app/) · [**Ver código-fonte**](https://github.com/Filipcardos/amon-ai) · [**Melhorias em desenvolvimento**](https://github.com/Filipcardos/amon-ai/pull/1)
+[**Experimentar aplicação**](https://amon-ai.streamlit.app/) · [**Ver código-fonte**](https://github.com/Filipcardos/amon-ai) · [**Ver atualização proposta**](https://github.com/Filipcardos/amon-ai/pull/1)
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Web_App-FF4B4B?logo=streamlit&logoColor=white)
@@ -41,23 +41,22 @@ Você pode testar perguntas como:
 
 *A disponibilidade da aplicação e dos modelos depende do serviço de hospedagem e da API configurada.*
 
-## Funcionalidades da versão principal
+## Funcionalidades da versão aprimorada
 
 | Funcionalidade | Descrição |
 |---|---|
-| Chat com IA | Perguntas e respostas sobre finanças pessoais em português brasileiro |
-| Histórico em sessão | Mantém mensagens durante o uso da sessão atual |
-| Identificação de intenção | Categoriza perguntas sobre investimentos, economia, dívidas, renda e planejamento |
-| Respostas contextualizadas | Utiliza instruções e mensagens anteriores para orientar as respostas |
-| Interface Streamlit | Layout escuro com apresentação em formato de conversa |
-| Integração OpenRouter | Envia solicitações a um modelo de linguagem usando API compatível com OpenAI |
-| Tratamento de falhas | Aplica tentativas em alguns erros transitórios e retorna mensagens amigáveis |
+| Chat com IA | Conversa em português brasileiro com histórico contextual sem duplicar a pergunta |
+| Histórico e exportação | Mantém mensagens na sessão, permite limpar e exportar o histórico em JSON |
+| Integração OpenRouter | Modelo configurável na barra lateral (padrão: `openrouter/free`) |
+| Simulador financeiro | Juros compostos com capital inicial, aportes mensais, taxa e prazo |
+| Visualização | Gráfico de evolução do saldo e métricas em reais |
+| Interface Streamlit | Componentes nativos de chat e controles interativos |
+| Tratamento de erros | Mensagens específicas para chave inválida, limite, conexão e respostas vazias |
+| Testes automatizados | Testes com cliente da API simulado e workflow GitHub Actions |
 
-### Em evolução
+### Próximos passos
 
-Há uma atualização proposta no **[Pull Request #1](https://github.com/Filipcardos/amon-ai/pull/1)**, que inclui correções do histórico, chat com componentes nativos do Streamlit, modelo configurável, simulador de juros compostos, exportação de conversas e testes automatizados.
-
-**Esses recursos ainda não estão disponíveis na branch `main` até a integração do Pull Request.**
+Persistência opcional das conversas, melhorias de acessibilidade, cenários financeiros adicionais e integração segura com dados fornecidos pelo próprio usuário.
 
 ## Tecnologias
 
@@ -75,8 +74,14 @@ amon-ai/
 ├── app.py              # Interface web com Streamlit
 ├── main.py             # Interação opcional via terminal
 ├── services/
-│   └── ia.py           # Integração com o modelo e regras do assistente
-├── requirements.txt    # Dependências Python
+│   ├── ia.py           # Integração com OpenRouter
+│   └── calculos.py     # Cálculos de juros compostos
+├── tests/               # Testes unitários
+├── .github/workflows/
+│   └── ci.yml           # Automação de testes
+├── .env.example         # Modelo de variáveis de ambiente
+├── requirements.txt
+├── requirements-dev.txt
 ├── .gitignore
 └── README.md
 ```
@@ -95,7 +100,7 @@ Usuário ← Resposta na interface ← Resposta processada
 
 - Python **3.10 ou superior**.
 - Git (opcional, caso baixe o projeto como ZIP).
-- Uma chave de API válida do [OpenRouter](https://openrouter.ai/keys).
+- Uma chave de API válida do [OpenRouter](https://openrouter.ai/keys). O roteador gratuito pode ter limites de uso.
 
 ### 2. Clone o repositório
 
@@ -128,14 +133,14 @@ python -m pip install -r requirements.txt
 
 ### 5. Configure sua chave do OpenRouter
 
-Na raiz do projeto, crie o arquivo **`.env`**:
+Copie `.env.example` para `.env` e preencha sua chave:
 
 ```env
 OPENROUTER_API_KEY=sua_chave_do_openrouter_aqui
 OPENROUTER_MODEL=openrouter/free
 ```
 
-A chave antiga `OPENAI_API_KEY` continua aceita para compatibilidade. O roteador `openrouter/free` seleciona um modelo gratuito disponível; consulte os [limites de uso do OpenRouter](https://openrouter.ai/collections/free-models/). Caso queira definir outro, altere `OPENROUTER_MODEL`.
+É possível trocar o modelo também pela barra lateral da aplicação. Verifique se o ID escolhido está disponível em sua conta do OpenRouter.
 
 ### 6. Inicie a aplicação
 
@@ -165,17 +170,29 @@ OPENROUTER_MODEL = "openrouter/free"
 
 **Não publique credenciais no GitHub**, no README ou em arquivos versionados.
 
+## Testes automatizados
+
+Os testes cobrem montagem de contexto, prevenção de pergunta duplicada, resposta da IA simulada, validação de entrada e simulações matemáticas.
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+Os testes unitários não exigem uma chave real do OpenRouter. A execução integrada da interface e uma chamada real à API devem ser verificadas separadamente.
+
 ## Segurança e limitações
 
 - Nunca compartilhe números completos de cartões, senhas, tokens ou dados bancários confidenciais com o chat.
-- O histórico da versão principal é mantido em memória de sessão, **não em banco de dados**.
+- O histórico é mantido na sessão atual, **não em banco de dados**. Você pode exportá-lo em JSON.
 - O assistente não consulta automaticamente seu saldo, dados bancários ou cotações em tempo real.
+- O simulador utiliza juros compostos com aporte no fim de cada mês e não considera taxas, tributos nem inflação.
 - Respostas geradas por IA podem conter erros: valide números, taxas e orientações antes de tomar decisões.
 - A configuração de cada modelo e a disponibilidade da API podem mudar conforme o provedor.
 
 ## Evolução do projeto
 
-O Amon AI está em aprimoramento contínuo. Entre os objetivos estão maior confiabilidade do contexto conversacional, simulações matemáticas independentes do modelo de linguagem, testes automatizados e uma base para futuras integrações com dados e dashboards.
+O Amon AI está em aprimoramento contínuo. Esta versão introduz melhorias no contexto conversacional, simulações matemáticas independentes da IA e testes automatizados. As próximas etapas poderão incluir memória persistente, visualizações financeiras adicionais e novas integrações.
 
 Acompanhe as alterações em [Pull Requests](https://github.com/Filipcardos/amon-ai/pulls).
 
