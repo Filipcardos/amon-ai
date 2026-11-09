@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 import streamlit as st
 from openai import OpenAI, APIError, APITimeoutError, RateLimitError
 from dotenv import load_dotenv
@@ -11,33 +12,47 @@ load_dotenv()
 
 # ✅ Seguro tanto local (.env) quanto em produção (st.secrets)
 def _get_api_key() -> str:
-    key = os.getenv("OPENAI_API_KEY")
+    key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not key:
         try:
-            key = st.secrets["OPENAI_API_KEY"]
-        except (AttributeError, KeyError):
-            pass
+            key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+        except Exception:
+            key = None
     if not key:
         raise EnvironmentError(
-            "OPENAI_API_KEY não encontrada. "
-            "Defina no .env (local) ou em st.secrets (produção)."
+            "Chave do OpenRouter não encontrada. "
+            "Defina OPENROUTER_API_KEY (ou OPENAI_API_KEY) no .env "
+            "ou nos Secrets do Streamlit."
         )
     return key
 
 client = OpenAI(
     api_key=_get_api_key(),
     base_url="https://openrouter.ai/api/v1",
-    timeout=20.0,       # ✅ evita travamento silencioso
+    timeout=45.0,       # tolera latência maior de modelos gratuitos
+    max_retries=0,      # evita retentativas duplicadas com o laço abaixo
 )
 
 # ─────────────────────────────────────────────
 # Constantes
 # ─────────────────────────────────────────────
-MODELO = "meta-llama/llama-3-8b-instruct"
+# O modelo antigo Llama 3 8B pode não ter provedores ativos.
+# openrouter/free escolhe automaticamente uma alternativa gratuita disponível.
+def _get_modelo() -> str:
+    modelo = os.getenv("OPENROUTER_MODEL")
+    if not modelo:
+        try:
+            modelo = st.secrets.get("OPENROUTER_MODEL")
+        except Exception:
+            modelo = None
+    return (modelo or "openrouter/free").strip()
+
+
+MODELO = _get_modelo()
 # 💡 Para melhor PT-BR, considere: "mistralai/mistral-7b-instruct" ou
 #    "openai/gpt-4o-mini" — muito melhor em português com custo baixo.
 
-MAX_TOKENS = 350          # um pouco mais de margem sem explodir
+MAX_TOKENS = 900          # um pouco mais de margem sem explodir
 MAX_HISTORICO = 10        # ✅ limita janela de contexto (5 pares user/assistant)
 MAX_TENTATIVAS = 2        # ✅ retry automático em falha transitória
 PAUSA_RETRY = 1.5         # segundos entre tentativas
@@ -93,7 +108,7 @@ def detectar_intencao(pergunta: str) -> tuple[str, str]:
 # ─────────────────────────────────────────────
 
 # ✅ Lista mais precisa — só sequências que NÃO ocorrem em PT-BR legítimo
-_LIXO_INDICADORES = ["///", "***", "###", "```", "----", "===="]
+_LIXO_INDICADORES = ["==== ==== ===="]  # Markdown normal não é erro
 
 # ✅ Bigrams que indicam inglês real (não confundem com PT-BR)
 _BIGRAMS_INGLES = [
@@ -106,7 +121,7 @@ def _validar_resposta(texto: str) -> str | None:
     """
     Retorna mensagem de erro se a resposta for inválida, ou None se estiver OK.
     """
-    if len(texto.split()) < 5:
+    if not texto.strip():
         return "⚠️ Não consegui gerar uma resposta útil. Pode reformular?"
 
     texto_lower = texto.lower()
@@ -143,7 +158,17 @@ def perguntar_ia(pergunta: str, historico: list[dict]) -> str:
         system_content += f"\nContexto desta conversa: {contexto_extra}"
 
     # ✅ Limita histórico para não explodir o contexto
-    historico_limitado = historico[-(MAX_HISTORICO):]
+    historico_limitado = [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in historico
+        if isinstance(msg, dict)
+        and msg.get("role") in ("user", "assistant")
+        and isinstance(msg.get("content"), str)
+    ][-(MAX_HISTORICO):]
+    # app.py já acrescenta a pergunta antes de chamar perguntar_ia.
+    if (historico_limitado and historico_limitado[-1]["role"] == "user"
+            and historico_limitado[-1]["content"].strip() == pergunta.strip()):
+        historico_limitado = historico_limitado[:-1]
 
     messages = (
         [{"role": "system", "content": system_content}]
@@ -162,7 +187,7 @@ def perguntar_ia(pergunta: str, historico: list[dict]) -> str:
                 messages=messages,
             )
 
-            texto = resposta.choices[0].message.content.strip()
+            texto = (resposta.choices[0].message.content or "").strip()
 
             # ✅ Valida qualidade
             erro_validacao = _validar_resposta(texto)
@@ -189,6 +214,23 @@ def perguntar_ia(pergunta: str, historico: list[dict]) -> str:
 
         except APIError as e:
             ultimo_erro = e
+            status = getattr(e, "status_code", None)
+            logging.warning("OpenRouter falhou: status=%s, modelo=%s, erro=%s",
+                            status, MODELO, type(e).__name__)
+            if status in (400, 404, 422):
+                return ("⚠️ O modelo de IA não está disponível ou não aceitou a solicitação. "
+                        "Confira OPENROUTER_MODEL nos Secrets ou remova a configuração "
+                        "para usar openrouter/free.")
+            if status in (401, 403):
+                return ("⚠️ A chave de API não foi aceita pelo OpenRouter. "
+                        "Confira OPENROUTER_API_KEY nos Secrets do Streamlit.")
+            if status == 402:
+                return ("⚠️ O OpenRouter exige créditos para este modelo. "
+                        "Use OPENROUTER_MODEL=openrouter/free ou consulte sua conta.")
+            if status == 429:
+                return "⚠️ Limite de uso do OpenRouter atingido. Tente mais tarde."
+            if status and status < 500:
+                return f"⚠️ O OpenRouter recusou a solicitação (HTTP {status}). Verifique o modelo e a conta."
             if tentativa < MAX_TENTATIVAS:
                 time.sleep(PAUSA_RETRY)
 
@@ -198,4 +240,7 @@ def perguntar_ia(pergunta: str, historico: list[dict]) -> str:
             return "⚠️ O Amon encontrou um erro inesperado. Tente novamente em instantes."
 
     # Esgotou as tentativas
-    return "⚠️ O serviço está instável no momento. Tente novamente em breve."
+    logging.warning("Falha final OpenRouter: modelo=%s, tipo=%s",
+                    MODELO, type(ultimo_erro).__name__ if ultimo_erro else "desconhecido")
+    return ("⚠️ Falha temporária na conexão com o OpenRouter. "
+            "Se continuar, verifique os logs em Manage app → Logs no Streamlit.")
