@@ -1,143 +1,141 @@
+"""Interface web do Amon AI."""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime
+
 import streamlit as st
-from services.ia import perguntar_ia
-import time
 
-st.set_page_config(page_title="Amon AI", layout="centered")
+from services.calculos import simular_juros_compostos
+from services.ia import DEFAULT_MODEL, IAServiceError, perguntar_ia
 
-# 🎨 CSS COMPLETO (visual + animações)
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(180deg, #0d1117, #02040a);
-    color: white;
-}
+st.set_page_config(page_title="Amon AI | Finanças pessoais", page_icon="💳", layout="centered")
 
-/* Centralização */
-.chat-container {
-    max-width: 700px;
-    margin: auto;
-    padding-top: 30px;
-}
 
-/* Mensagens */
-.user-msg {
-    background-color: #1f2937;
-    padding: 12px;
-    border-radius: 12px;
-    margin-bottom: 10px;
-    text-align: right;
-}
+def configuracao(nome: str) -> str:
+    """Busca configuração primeiro no ambiente, depois no Streamlit Secrets."""
+    valor = os.getenv(nome)
+    if valor:
+        return valor
+    try:
+        return str(st.secrets.get(nome, ""))
+    except Exception:  # st.secrets pode não estar configurado no ambiente local
+        return ""
 
-.bot-msg {
-    background-color: #111827;
-    padding: 12px;
-    border-radius: 12px;
-    margin-bottom: 10px;
-    border-left: 3px solid #00c896;
-}
 
-/* Fade animation */
-.bot-msg, .user-msg {
-    animation: fadeIn 0.3s ease-in-out;
-}
+def em_reais(valor) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
 
-/* Hover leve */
-.bot-msg:hover, .user-msg:hover {
-    transform: scale(1.01);
-    transition: 0.2s;
-}
+st.markdown(
+    """<style>
+    .stApp {background: linear-gradient(160deg, #101722, #070b12);}
+    [data-testid="stChatMessage"] {border: 1px solid #253346; border-radius: 14px;}
+    [data-testid="stSidebar"] {background: #0e1520;}
+    </style>""",
+    unsafe_allow_html=True,  # HTML apenas ESTÁTICO, nenhum texto de usuário/IA aqui.
+)
 
-/* Avatar */
-.avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-}
+if "mensagens" not in st.session_state:
+    st.session_state.mensagens = []
 
-/* Header */
-.title {
-    text-align: center;
-    font-size: 28px;
-    font-weight: bold;
-}
+with st.sidebar:
+    st.header("Configurações")
+    modelo = st.text_input(
+        "Modelo do OpenRouter",
+        value=configuracao("OPENROUTER_MODEL") or DEFAULT_MODEL,
+        help="openrouter/free é gratuito, mas pode variar de modelo e sofrer limites.",
+    ).strip()
+    api_key = configuracao("OPENROUTER_API_KEY") or configuracao("OPENAI_API_KEY")
+    if not api_key:
+        api_key = st.text_input(
+            "Chave do OpenRouter",
+            type="password",
+            help="Usada apenas nesta sessão. Para produção, configure em Secrets.",
+        ).strip()
 
-.subtitle {
-    text-align: center;
-    color: #999;
-    margin-bottom: 20px;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ✅ Header estilo app real
-st.markdown('<div class="title">🤖 Amon AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Como posso te ajudar com suas finanças hoje?</div>', unsafe_allow_html=True)
-
-# ✅ Histórico
-if "historico" not in st.session_state:
-    st.session_state.historico = []
-
-# ✅ Função efeito digitando
-def efeito_digitando(texto):
-    placeholder = st.empty()
-    texto_parcial = ""
-
-    for char in texto:
-        texto_parcial += char
-        placeholder.markdown(f'<div class="bot-msg">💡 {texto_parcial}</div>', unsafe_allow_html=True)
-        time.sleep(0.01)
-
-# ✅ Render chat
-st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-
-for msg in st.session_state.historico:
-    if msg["role"] == "user":
-        st.markdown(f"""
-        <div style="display: flex; justify-content: flex-end;">
-            <div class="user-msg">{msg["content"]}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div style="display: flex; align-items: flex-start; gap: 8px;">
-            <img class="avatar" src="https://cdn-icons-png.flaticon.com/512/4712/4712109.png">
-            <div class="bot-msg">{msg["content"]}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ✅ Input estilo chat
-pergunta = st.chat_input("Digite sua pergunta...")
-
-# ✅ Processamento
-if pergunta:
-
-    # salva usuário
-    st.session_state.historico.append({"role": "user", "content": pergunta})
-
-    # simulação simples
-    if "juros" in pergunta.lower():
-        resposta = "📊 Para simular juros com precisão, utilize um cálculo detalhado (versão futura interativa)."
-
-        st.session_state.historico.append({"role": "assistant", "content": resposta})
+    if st.button("Nova conversa", use_container_width=True):
+        st.session_state.mensagens = []
         st.rerun()
 
-    with st.spinner("🤖 Amon está pensando..."):
-        resposta = perguntar_ia(pergunta, st.session_state.historico)
+    if st.session_state.mensagens:
+        exportacao = {
+            "aplicacao": "Amon AI",
+            "exportado_em": datetime.now().astimezone().isoformat(),
+            "mensagens": st.session_state.mensagens,
+        }
+        st.download_button(
+            "Exportar conversa (JSON)",
+            data=json.dumps(exportacao, ensure_ascii=False, indent=2),
+            file_name="amon-conversa.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+    st.caption("Seu histórico fica na sessão atual e não é armazenado em banco de dados.")
+    st.caption("Não informe senhas, números de cartão ou dados bancários sensíveis no chat.")
 
-    st.session_state.historico.append({"role": "assistant", "content": resposta})
+st.title("💳 Amon AI")
+st.caption("Seu assistente de educação financeira, com respostas práticas em português.")
 
-    st.rerun()
+chat_tab, simulador_tab = st.tabs(["Chat com IA", "Simulador de juros"])
+
+with chat_tab:
+    for mensagem in st.session_state.mensagens:
+        with st.chat_message(mensagem["role"]):
+            if mensagem.get("is_error"):
+                st.error(mensagem["content"])
+            else:
+                st.markdown(mensagem["content"])  # HTML inseguro NÃO habilitado.
+
+    if not api_key:
+        st.info("Configure sua chave do OpenRouter na barra lateral para começar.")
+
+    pergunta = st.chat_input(
+        "Ex.: Como montar minha reserva de emergência?",
+        max_chars=2000,
+        disabled=not bool(api_key) or not bool(modelo),
+    )
+    if pergunta:
+        # Primeiro registra a pergunta para a interface. Ao modelo, envia apenas
+        # o histórico ANTERIOR ([:-1]), evitando duplicação.
+        st.session_state.mensagens.append({"role": "user", "content": pergunta})
+        with st.chat_message("user"):
+            st.markdown(pergunta)
+        with st.chat_message("assistant"):
+            with st.spinner("Amon está pensando..."):
+                try:
+                    resposta = perguntar_ia(
+                        pergunta,
+                        st.session_state.mensagens[:-1],
+                        api_key=api_key,
+                        modelo=modelo,
+                    )
+                    st.markdown(resposta)
+                    st.session_state.mensagens.append({"role": "assistant", "content": resposta})
+                except (IAServiceError, ValueError) as erro:
+                    mensagem_erro = str(erro)
+                    st.error(mensagem_erro)
+                    st.session_state.mensagens.append(
+                        {"role": "assistant", "content": mensagem_erro, "is_error": True}
+                    )
+
+with simulador_tab:
+    st.subheader("Juros compostos com aportes mensais")
+    st.caption("Simulação hipotética. Aportes realizados no final de cada mês.")
+    col1, col2 = st.columns(2)
+    with col1:
+        capital = st.number_input("Capital inicial (R$)", min_value=0.0, value=1000.0, step=100.0)
+        aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=200.0, step=50.0)
+    with col2:
+        taxa = st.number_input("Taxa mensal hipotética (%)", min_value=-100.0, max_value=100.0, value=0.70, step=0.1)
+        meses = st.number_input("Prazo (meses)", min_value=1, max_value=600, value=24, step=1)
+
+    resultado = simular_juros_compostos(capital, aporte, taxa, int(meses))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Saldo final", em_reais(resultado["valor_final"]))
+    c2.metric("Total aplicado", em_reais(resultado["total_investido"]))
+    c3.metric("Rendimento", em_reais(resultado["rendimento"]))
+    st.line_chart({"Saldo projetado (R$)": [p["Saldo"] for p in resultado["evolucao"]]})
+    st.caption("Não considera tributos, taxas, inflação ou oscilações reais. Não é promessa de rendimento.")

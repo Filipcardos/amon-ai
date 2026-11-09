@@ -1,201 +1,149 @@
+"""Integração do Amon com modelos via OpenRouter (API compatível com OpenAI)."""
+
+from __future__ import annotations
+
+import logging
 import os
-import time
-import streamlit as st
-from openai import OpenAI, APIError, APITimeoutError, RateLimitError
+from typing import Any
+
 from dotenv import load_dotenv
+from openai import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    OpenAI,
+    RateLimitError,
+)
 
-# ─────────────────────────────────────────────
-# Configuração
-# ─────────────────────────────────────────────
 load_dotenv()
+logger = logging.getLogger(__name__)
 
-# ✅ Seguro tanto local (.env) quanto em produção (st.secrets)
-def _get_api_key() -> str:
-    key = os.getenv("OPENAI_API_KEY")
-    if not key:
-        try:
-            key = st.secrets["OPENAI_API_KEY"]
-        except (AttributeError, KeyError):
-            pass
-    if not key:
-        raise EnvironmentError(
-            "OPENAI_API_KEY não encontrada. "
-            "Defina no .env (local) ou em st.secrets (produção)."
-        )
-    return key
+DEFAULT_MODEL = "openrouter/free"
+OPENROUTER_URL = "https://openrouter.ai/api/v1"
+MAX_HISTORICO = 12
+MAX_PERGUNTA = 4000
+MAX_RESPOSTA_TOKENS = 900
 
-client = OpenAI(
-    api_key=_get_api_key(),
-    base_url="https://openrouter.ai/api/v1",
-    timeout=20.0,       # ✅ evita travamento silencioso
-)
-
-# ─────────────────────────────────────────────
-# Constantes
-# ─────────────────────────────────────────────
-MODELO = "meta-llama/llama-3-8b-instruct"
-# 💡 Para melhor PT-BR, considere: "mistralai/mistral-7b-instruct" ou
-#    "openai/gpt-4o-mini" — muito melhor em português com custo baixo.
-
-MAX_TOKENS = 350          # um pouco mais de margem sem explodir
-MAX_HISTORICO = 10        # ✅ limita janela de contexto (5 pares user/assistant)
-MAX_TENTATIVAS = 2        # ✅ retry automático em falha transitória
-PAUSA_RETRY = 1.5         # segundos entre tentativas
-
-SYSTEM_PROMPT_BASE = (
-    "Você é Amon, um assistente financeiro pessoal brasileiro.\n"
-    "Responda SEMPRE em português do Brasil, sem exceções.\n"
-    "Seja claro, objetivo e direto.\n"
-    "Use frases curtas e práticas.\n"
-    "Explique de forma simples, como se falasse com um amigo.\n"
-    "Use no máximo 5 linhas por resposta.\n"
-    "Se não souber algo, diga honestamente que não tem certeza.\n"
-    "Nunca invente dados, taxas ou informações financeiras.\n"
-)
-
-# ─────────────────────────────────────────────
-# Intenção
-# ─────────────────────────────────────────────
-_INTENCOES = {
-    "investimento": (
-        ["investir", "investimento", "aplicar", "rendimento", "tesouro", "ações", "fundo"],
-        "Dê sugestões básicas de investimento considerando perfil conservador/baixo risco.",
-    ),
-    "economia": (
-        ["economizar", "poupar", "cortar gastos", "gastar menos"],
-        "Sugira formas práticas de economizar dinheiro no dia a dia.",
-    ),
-    "divida": (
-        ["dívida", "divida", "devendo", "negativado", "juros", "parcelado"],
-        "Ajude com estratégias para sair de dívidas, priorizando as de maior juros.",
-    ),
-    "renda": (
-        ["salário", "renda", "ganho", "receita", "orçamento", "organizar"],
-        "Explique de forma simples como organizar renda e despesas mensais.",
-    ),
-    "planejamento": (
-        ["meta", "objetivo", "aposentadoria", "reserva", "emergência"],
-        "Ajude com planejamento financeiro de curto e longo prazo.",
-    ),
-}
-
-def detectar_intencao(pergunta: str) -> tuple[str, str]:
-    """Retorna (nome_intencao, contexto_extra)."""
-    texto = pergunta.lower()
-    for nome, (palavras, contexto) in _INTENCOES.items():
-        if any(p in texto for p in palavras):
-            return nome, contexto
-    return "geral", ""
+SYSTEM_PROMPT = """Você é Amon, um assistente de educação financeira para pessoas no Brasil.
+Responda em português brasileiro, de maneira clara, correta, respeitosa e prática.
+Ajude com orçamento, dívidas, poupança, investimentos e conceitos financeiros.
+Não invente taxas, preços, notícias, regras tributárias ou dados atualizados.
+Você não tem acesso automático a cotações, saldos bancários ou à internet.
+Para cálculos, declare os valores, a unidade da taxa, o prazo e as hipóteses.
+Se faltarem dados essenciais para um cálculo, peça-os. Não confunda taxa mensal e anual.
+Em investimentos, apresente riscos e alternativas sem garantir resultados.
+Não trate informações educacionais como aconselhamento financeiro individualizado.
+Use listas e exemplos quando ajudarem; não corte artificialmente explicações necessárias.
+"""
 
 
-# ─────────────────────────────────────────────
-# Validação de resposta
-# ─────────────────────────────────────────────
+class IAServiceError(Exception):
+    """Erro amigável e seguro para exibir na interface."""
 
-# ✅ Lista mais precisa — só sequências que NÃO ocorrem em PT-BR legítimo
-_LIXO_INDICADORES = ["///", "***", "###", "```", "----", "===="]
 
-# ✅ Bigrams que indicam inglês real (não confundem com PT-BR)
-_BIGRAMS_INGLES = [
-    "this is", "that is", "it is", "we are", "they are",
-    "you are", "i am", "do not", "does not", "can not",
-    "the best", "the most", "the only",
-]
+def montar_mensagens(pergunta: str, historico: list[dict] | None = None) -> list[dict]:
+    """Cria payload com a pergunta atual exatamente uma vez.
 
-def _validar_resposta(texto: str) -> str | None:
+    Aceita histórico com mensagens já exibidas; se o chamador incluiu a
+    pergunta atual como último item, remove a duplicata automaticamente.
     """
-    Retorna mensagem de erro se a resposta for inválida, ou None se estiver OK.
-    """
-    if len(texto.split()) < 5:
-        return "⚠️ Não consegui gerar uma resposta útil. Pode reformular?"
+    pergunta = pergunta.strip()
+    if not pergunta:
+        raise ValueError("Digite uma pergunta para o Amon.")
+    if len(pergunta) > MAX_PERGUNTA:
+        raise ValueError(f"A pergunta pode ter no máximo {MAX_PERGUNTA} caracteres.")
 
-    texto_lower = texto.lower()
-    if any(bi in texto_lower for bi in _BIGRAMS_INGLES):
-        return "⚠️ A resposta saiu no idioma errado. Tente novamente."
+    mensagens_anteriores: list[dict[str, str]] = []
+    for msg in historico or []:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("is_error"):
+            # Um par pergunta/erro não representa uma resposta útil do modelo.
+            if (msg.get("role") == "assistant" and mensagens_anteriores
+                    and mensagens_anteriores[-1]["role"] == "user"):
+                mensagens_anteriores.pop()
+            continue
+        role = msg.get("role")
+        conteudo = msg.get("content")
+        if role in {"user", "assistant"} and isinstance(conteudo, str) and conteudo.strip():
+            mensagens_anteriores.append({"role": role, "content": conteudo[:MAX_PERGUNTA]})
 
-    if any(s in texto for s in _LIXO_INDICADORES):
-        return "⚠️ Ocorreu um erro na formatação da resposta. Tente novamente."
+    if (mensagens_anteriores and mensagens_anteriores[-1]["role"] == "user"
+            and mensagens_anteriores[-1]["content"].strip() == pergunta):
+        mensagens_anteriores.pop()
 
-    return None  # ✅ resposta OK
-
-
-# ─────────────────────────────────────────────
-# Função principal
-# ─────────────────────────────────────────────
-
-def perguntar_ia(pergunta: str, historico: list[dict]) -> str:
-    """
-    Envia a pergunta para o modelo e retorna a resposta formatada.
-
-    Args:
-        pergunta:  texto do usuário
-        historico: lista de dicts {"role": ..., "content": ...}
-                   (apenas mensagens anteriores, SEM a pergunta atual)
-
-    Returns:
-        String com a resposta do Amon (ou mensagem de erro amigável).
-    """
-    intencao, contexto_extra = detectar_intencao(pergunta)
-
-    # ✅ Monta system prompt dinâmico de forma limpa
-    system_content = SYSTEM_PROMPT_BASE
-    if contexto_extra:
-        system_content += f"\nContexto desta conversa: {contexto_extra}"
-
-    # ✅ Limita histórico para não explodir o contexto
-    historico_limitado = historico[-(MAX_HISTORICO):]
-
-    messages = (
-        [{"role": "system", "content": system_content}]
-        + historico_limitado
+    mensagens_anteriores = mensagens_anteriores[-MAX_HISTORICO:]
+    return (
+        [{"role": "system", "content": SYSTEM_PROMPT}]
+        + mensagens_anteriores
         + [{"role": "user", "content": pergunta}]
     )
 
-    ultimo_erro: Exception | None = None
 
-    for tentativa in range(1, MAX_TENTATIVAS + 1):
-        try:
-            resposta = client.chat.completions.create(
-                model=MODELO,
-                max_tokens=MAX_TOKENS,
-                temperature=0.4,   # ✅ mais consistente para finanças
-                messages=messages,
+def perguntar_ia(
+    pergunta: str,
+    historico: list[dict] | None = None,
+    *,
+    api_key: str | None = None,
+    modelo: str | None = None,
+    cliente: Any | None = None,
+) -> str:
+    """Consulta a IA; não altera o histórico recebido.
+
+    api_key e modelo são opcionais para manter compatibilidade com main.py.
+    O parâmetro cliente permite testes sem chamadas externas.
+    """
+    messages = montar_mensagens(pergunta, historico)
+    modelo = (modelo or os.getenv("OPENROUTER_MODEL") or DEFAULT_MODEL).strip()
+
+    if cliente is None:
+        chave = api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not chave:
+            raise IAServiceError(
+                "Chave do OpenRouter não configurada. Adicione OPENROUTER_API_KEY "
+                "no .env ou nos Secrets do Streamlit."
             )
+        cliente = OpenAI(
+            api_key=chave,
+            base_url=OPENROUTER_URL,
+            timeout=45.0,
+            max_retries=1,
+        )
 
-            texto = resposta.choices[0].message.content.strip()
+    try:
+        resposta = cliente.chat.completions.create(
+            model=modelo,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=MAX_RESPOSTA_TOKENS,
+        )
+        choices = getattr(resposta, "choices", None)
+        if not choices:
+            raise IAServiceError("O modelo não retornou uma resposta. Tente novamente.")
+        conteudo = getattr(choices[0].message, "content", None)
+        if not isinstance(conteudo, str) or not conteudo.strip():
+            raise IAServiceError(
+                "O modelo retornou uma mensagem vazia. Tente novamente ou escolha outro modelo."
+            )
+        return conteudo.strip()
 
-            # ✅ Valida qualidade
-            erro_validacao = _validar_resposta(texto)
-            if erro_validacao:
-                # Na última tentativa, entrega o erro; senão tenta de novo
-                if tentativa == MAX_TENTATIVAS:
-                    return erro_validacao
-                time.sleep(PAUSA_RETRY)
-                continue
-
-            # ✅ Trunca se necessário (sem cortar no meio de uma palavra)
-            if len(texto) > 800:
-                texto = texto[:797].rsplit(" ", 1)[0] + "…"
-
-            return f"💡 {texto}"
-
-        except RateLimitError:
-            return "⚠️ Muitas requisições. Aguarde alguns segundos e tente novamente."
-
-        except APITimeoutError:
-            ultimo_erro = APITimeoutError("timeout")
-            if tentativa < MAX_TENTATIVAS:
-                time.sleep(PAUSA_RETRY)
-
-        except APIError as e:
-            ultimo_erro = e
-            if tentativa < MAX_TENTATIVAS:
-                time.sleep(PAUSA_RETRY)
-
-        except Exception as e:
-            # Erros inesperados — não faz retry
-            # Em produção, logue aqui: logging.exception(e)
-            return "⚠️ O Amon encontrou um erro inesperado. Tente novamente em instantes."
-
-    # Esgotou as tentativas
-    return "⚠️ O serviço está instável no momento. Tente novamente em breve."
+    except AuthenticationError as exc:
+        logger.warning("Falha de autenticação no OpenRouter: %s", type(exc).__name__)
+        raise IAServiceError("Chave de API inválida ou sem permissão. Confira o OpenRouter.") from exc
+    except RateLimitError as exc:
+        raise IAServiceError("Limite de requisições atingido. Tente mais tarde ou troque o modelo.") from exc
+    except (APITimeoutError, APIConnectionError) as exc:
+        logger.warning("Falha de conexão com OpenRouter: %s", type(exc).__name__)
+        raise IAServiceError("Não foi possível conectar ao serviço de IA. Tente novamente.") from exc
+    except BadRequestError as exc:
+        logger.warning("Requisição inválida ao OpenRouter: %s", type(exc).__name__)
+        raise IAServiceError("O modelo escolhido não aceitou a solicitação. Confira o ID do modelo.") from exc
+    except APIStatusError as exc:
+        logger.warning("OpenRouter retornou HTTP %s", exc.status_code)
+        raise IAServiceError("O provedor de IA está indisponível. Tente novamente mais tarde.") from exc
+    except APIError as exc:
+        logger.exception("Falha inesperada do SDK OpenAI/OpenRouter")
+        raise IAServiceError("Houve uma falha na geração da resposta. Tente novamente.") from exc
