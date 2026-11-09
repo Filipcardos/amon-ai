@@ -207,8 +207,8 @@ def perguntar_ia(pergunta: str, historico: list[dict]) -> str:
         except RateLimitError:
             return "⚠️ Muitas requisições. Aguarde alguns segundos e tente novamente."
 
-        except APITimeoutError:
-            ultimo_erro = APITimeoutError("timeout")
+        except APITimeoutError as exc:
+            ultimo_erro = exc
             if tentativa < MAX_TENTATIVAS:
                 time.sleep(PAUSA_RETRY)
 
